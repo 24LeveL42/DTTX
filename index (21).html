@@ -1,0 +1,949 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>TACMAP — Command Center</title>
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
+
+  <link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Rajdhani:wght@400;600;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #0a0f0d;
+      --surface: #111a14;
+      --border: #1f3a24;
+      --accent: #39ff6a;
+      --accent2: #00e5ff;
+      --danger: #ff4444;
+      --warn: #ffaa00;
+      --text: #c8e6c9;
+      --dim: #4a6950;
+      --grid: rgba(57,255,106,0.04);
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'Rajdhani', sans-serif;
+      height: 100vh;
+      overflow: hidden;
+      display: grid;
+      grid-template-rows: 48px 1fr;
+      grid-template-columns: 1fr 300px;
+    }
+
+    /* Scanline overlay */
+    body::before {
+      content: '';
+      position: fixed; inset: 0;
+      background: repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(0,0,0,0.03) 2px, rgba(0,0,0,0.03) 4px);
+      pointer-events: none;
+      z-index: 9999;
+    }
+
+    /* HEADER */
+    header {
+      grid-column: 1 / -1;
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      padding: 0 16px;
+      gap: 16px;
+    }
+    .logo {
+      font-family: 'Share Tech Mono', monospace;
+      font-size: 18px;
+      color: var(--accent);
+      letter-spacing: 4px;
+      text-shadow: 0 0 12px var(--accent);
+    }
+    .header-info { display: flex; gap: 20px; margin-left: auto; align-items: center; font-size: 13px; }
+    .status-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 6px var(--accent); animation: pulse 2s infinite; }
+    @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.4} }
+    .session-id { font-family: 'Share Tech Mono', monospace; color: var(--accent2); font-size: 12px; }
+
+    /* MAP AREA */
+    #map-container {
+      position: relative;
+      overflow: hidden;
+      background: var(--surface);
+      border-right: 1px solid var(--border);
+      cursor: default;
+    }
+    #map-canvas {
+      position: absolute;
+      top: 0; left: 0;
+      width: 100%; height: 100%;
+    }
+    /* Grid overlay on map */
+    #map-container::after {
+      content: '';
+      position: absolute; inset: 0;
+      background-image:
+        linear-gradient(var(--grid) 1px, transparent 1px),
+        linear-gradient(90deg, var(--grid) 1px, transparent 1px);
+      background-size: 40px 40px;
+      pointer-events: none;
+    }
+
+    /* SIDEBAR */
+    #sidebar {
+      background: var(--surface);
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+    .sidebar-section {
+      border-bottom: 1px solid var(--border);
+      padding: 12px;
+    }
+    .sidebar-section h3 {
+      font-size: 11px;
+      letter-spacing: 2px;
+      color: var(--dim);
+      margin-bottom: 10px;
+      text-transform: uppercase;
+    }
+
+    /* Turn control */
+    #turn-display {
+      font-family: 'Share Tech Mono', monospace;
+      font-size: 15px;
+      color: var(--accent);
+      margin-bottom: 8px;
+      text-shadow: 0 0 8px var(--accent);
+    }
+    .btn {
+      display: block;
+      width: 100%;
+      padding: 8px 12px;
+      background: transparent;
+      border: 1px solid var(--accent);
+      color: var(--accent);
+      font-family: 'Rajdhani', sans-serif;
+      font-size: 14px;
+      font-weight: 600;
+      letter-spacing: 1px;
+      cursor: pointer;
+      text-transform: uppercase;
+      transition: all 0.15s;
+      margin-bottom: 6px;
+    }
+    .btn:hover { background: var(--accent); color: var(--bg); box-shadow: 0 0 12px var(--accent); }
+    .btn.danger { border-color: var(--danger); color: var(--danger); }
+    .btn.danger:hover { background: var(--danger); color: white; }
+    .btn.warn { border-color: var(--warn); color: var(--warn); }
+    .btn.warn:hover { background: var(--warn); color: var(--bg); }
+
+    /* Units list */
+    #units-list { flex: 1; overflow-y: auto; padding: 12px; }
+    .unit-item {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 8px;
+      border: 1px solid var(--border);
+      margin-bottom: 6px;
+      cursor: pointer;
+      transition: border-color 0.15s;
+      position: relative;
+    }
+    .unit-item:hover { border-color: var(--dim); }
+    .unit-item.active-turn { border-color: var(--accent); box-shadow: 0 0 8px rgba(57,255,106,0.2); }
+    .unit-icon { font-size: 20px; width: 28px; text-align: center; }
+    .unit-info { flex: 1; }
+    .unit-name { font-weight: 700; font-size: 14px; }
+    .unit-callsign { font-size: 11px; color: var(--dim); font-family: 'Share Tech Mono', monospace; }
+    .unit-online { width: 7px; height: 7px; border-radius: 50%; background: var(--dim); }
+    .unit-online.connected { background: var(--accent); box-shadow: 0 0 5px var(--accent); }
+
+    /* QR Modal */
+    #qr-modal {
+      display: none;
+      position: fixed; inset: 0;
+      background: rgba(0,0,0,0.85);
+      z-index: 1000;
+      align-items: center;
+      justify-content: center;
+    }
+    #qr-modal.open { display: flex; }
+    .modal-box {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      padding: 24px;
+      min-width: 320px;
+      max-height: 90vh;
+      overflow-y: auto;
+    }
+    .modal-box h2 { color: var(--accent); letter-spacing: 2px; margin-bottom: 4px; }
+    .modal-box p { font-size: 13px; color: var(--dim); margin-bottom: 16px; }
+    .qr-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+    .qr-unit-card {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      padding: 12px;
+      text-align: center;
+    }
+    .qr-unit-card h4 { font-size: 13px; margin-bottom: 8px; color: var(--text); }
+    .qr-unit-card .qr-code { display: flex; justify-content: center; margin-bottom: 8px; }
+    .qr-unit-card .qr-url { font-family: 'Share Tech Mono', monospace; font-size: 9px; color: var(--dim); word-break: break-all; }
+    .modal-close { float: right; background: none; border: 1px solid var(--dim); color: var(--dim); padding: 4px 10px; cursor: pointer; font-family: 'Rajdhani'; margin-bottom: 12px; }
+    .modal-close:hover { border-color: var(--danger); color: var(--danger); }
+
+    /* Setup modal */
+    #setup-modal {
+      display: flex;
+      position: fixed; inset: 0;
+      background: rgba(0,0,0,0.95);
+      z-index: 2000;
+      align-items: center;
+      justify-content: center;
+    }
+    .setup-box {
+      background: var(--surface);
+      border: 1px solid var(--accent);
+      padding: 32px;
+      width: 480px;
+      box-shadow: 0 0 40px rgba(57,255,106,0.1);
+    }
+    .setup-box h2 { color: var(--accent); letter-spacing: 3px; font-size: 22px; margin-bottom: 4px; }
+    .setup-box .subtitle { color: var(--dim); font-size: 13px; margin-bottom: 24px; }
+    .form-group { margin-bottom: 14px; }
+    .form-group label { display: block; font-size: 12px; color: var(--dim); letter-spacing: 1px; margin-bottom: 6px; text-transform: uppercase; }
+    .form-group input, .form-group select {
+      width: 100%;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      color: var(--text);
+      padding: 8px 12px;
+      font-family: 'Share Tech Mono', monospace;
+      font-size: 13px;
+      outline: none;
+    }
+    .form-group input:focus, .form-group select:focus { border-color: var(--accent); }
+    #firebase-config-input {
+      width: 100%;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      color: var(--text);
+      padding: 8px 12px;
+      font-family: 'Share Tech Mono', monospace;
+      font-size: 11px;
+      height: 80px;
+      resize: vertical;
+      outline: none;
+    }
+    #firebase-config-input:focus { border-color: var(--accent); }
+    .hint { font-size: 11px; color: var(--dim); margin-top: 4px; }
+    .hint a { color: var(--accent2); }
+    .demo-note {
+      background: rgba(255,170,0,0.1);
+      border: 1px solid var(--warn);
+      padding: 10px 12px;
+      font-size: 12px;
+      color: var(--warn);
+      margin-bottom: 16px;
+    }
+
+    /* Log */
+    #event-log {
+      font-family: 'Share Tech Mono', monospace;
+      font-size: 11px;
+      padding: 12px;
+      height: 140px;
+      overflow-y: auto;
+      border-top: 1px solid var(--border);
+    }
+    .log-entry { margin-bottom: 4px; }
+    .log-entry .ts { color: var(--dim); }
+    .log-entry .msg { color: var(--text); }
+    .log-entry.move .msg { color: var(--accent); }
+    .log-entry.turn .msg { color: var(--accent2); }
+    .log-entry.join .msg { color: var(--warn); }
+
+    /* Add unit form */
+    .add-unit-row {
+      display: flex;
+      gap: 6px;
+      margin-bottom: 8px;
+    }
+    .add-unit-row input {
+      flex: 1;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      color: var(--text);
+      padding: 6px 8px;
+      font-family: 'Rajdhani', sans-serif;
+      font-size: 13px;
+      outline: none;
+    }
+    .add-unit-row input:focus { border-color: var(--accent); }
+    .add-unit-row select {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      color: var(--text);
+      padding: 6px 4px;
+      font-size: 18px;
+      outline: none;
+    }
+    .add-unit-row .btn { width: auto; margin: 0; padding: 6px 12px; }
+
+    .coord-display {
+      font-family: 'Share Tech Mono', monospace;
+      font-size: 10px;
+      color: var(--dim);
+      position: absolute;
+      bottom: 8px;
+      left: 8px;
+      background: rgba(10,15,13,0.8);
+      padding: 4px 8px;
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <div class="logo">⬡ TACMAP</div>
+  <div style="font-size:13px;color:var(--dim)">COMMAND CENTER</div>
+  <div class="header-info">
+    <div class="status-dot" id="conn-dot"></div>
+    <span id="conn-status" style="font-size:12px;color:var(--dim)">OFFLINE</span>
+    <span class="session-id" id="session-label">SESSION: —</span>
+    <button class="btn" style="width:auto;margin:0;padding:4px 12px;font-size:12px" onclick="showQR()">📱 QR CODES</button>
+  </div>
+</header>
+
+<div id="map-container">
+  <canvas id="map-canvas"></canvas>
+  <div class="coord-display" id="coord-display">X:— Y:—</div>
+</div>
+
+<div id="sidebar">
+  <div class="sidebar-section">
+    <h3>Turn Control</h3>
+    <div id="turn-display">— WAITING —</div>
+    <button class="btn" onclick="nextTurn()">▶ NEXT TURN</button>
+    <button class="btn warn" onclick="resetTurns()">↺ RESET TURNS</button>
+  </div>
+
+  <div class="sidebar-section">
+    <h3>Add Unit</h3>
+    <div class="add-unit-row">
+      <select id="new-unit-icon">
+        <option>🔴</option><option>🔵</option><option>🟢</option><option>🟡</option>
+        <option>⚫</option><option>🟠</option><option>🟣</option><option>⚪</option>
+        <option>✈️</option><option>🚁</option><option>🚢</option><option>🛡️</option>
+        <option>⚔️</option><option>🎯</option><option>🏴</option><option>🚩</option>
+      </select>
+      <input id="new-unit-name" placeholder="Unit name" maxlength="20"/>
+    </div>
+    <div class="add-unit-row">
+      <input id="new-unit-callsign" placeholder="Callsign (e.g. ALPHA-1)" maxlength="12"/>
+      <button class="btn" onclick="addUnit()">+ ADD</button>
+    </div>
+  </div>
+
+  <div id="units-list"></div>
+
+  <div id="event-log"></div>
+</div>
+
+<!-- QR Modal -->
+<div id="qr-modal">
+  <div class="modal-box">
+    <button class="modal-close" onclick="closeQR()">✕ CLOSE</button>
+    <h2>UNIT QR CODES</h2>
+    <p>Print or display these. Each participant scans their unit's QR.</p>
+    <div class="qr-grid" id="qr-grid"></div>
+  </div>
+</div>
+
+<!-- Setup Modal -->
+<div id="setup-modal">
+  <div class="setup-box">
+    <h2>TACMAP SETUP</h2>
+    <div class="subtitle">Configure Firebase for real-time sync</div>
+
+    <div class="demo-note">
+      ⚠ You need a FREE Firebase project for real-time sync across devices.<br>
+      Takes ~2 min to set up. Or use Demo Mode (single device only).
+    </div>
+
+    <div class="form-group">
+      <label>Firebase Config JSON</label>
+      <textarea id="firebase-config-input" placeholder='{
+  "apiKey": "...",
+  "authDomain": "...",
+  "databaseURL": "...",
+  "projectId": "..."
+}'></textarea>
+      <div class="hint">
+        <a href="https://console.firebase.google.com" target="_blank">console.firebase.google.com</a>
+        → New project → Realtime Database → Project Settings → Your apps → Add web app
+      </div>
+    </div>
+
+    <div class="form-group">
+      <label>Session Name</label>
+      <input id="session-name-input" placeholder="e.g. EXERCISE LION 2025" value="EXERCISE TACMAP"/>
+    </div>
+
+    <div style="display:flex;gap:10px;margin-top:8px">
+      <button class="btn" style="flex:1" onclick="initFirebase()">⚡ CONNECT & START</button>
+      <button class="btn warn" style="flex:1" onclick="demoMode()">🖥 DEMO MODE</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// ═══════════════════════════════════════════════
+// STATE
+// ═══════════════════════════════════════════════
+let db = null;
+let sessionId = '';
+let units = {};
+let currentTurnIndex = 0;
+let unitOrder = [];
+let isDemo = false;
+let mapImg = null;
+
+const CANVAS_W = () => document.getElementById('map-container').clientWidth;
+const CANVAS_H = () => document.getElementById('map-container').clientHeight;
+
+// ═══════════════════════════════════════════════
+// FIREBASE INIT
+// ═══════════════════════════════════════════════
+function initFirebase() {
+  const raw = document.getElementById('firebase-config-input').value.trim();
+  const session = document.getElementById('session-name-input').value.trim() || 'TACMAP';
+
+  let config;
+  try {
+    config = JSON.parse(raw);
+  } catch(e) {
+    alert('Invalid JSON config. Check your Firebase config.');
+    return;
+  }
+  if (!config.databaseURL) {
+    alert('Missing databaseURL in config. Make sure Realtime Database is enabled.');
+    return;
+  }
+
+  try {
+    const app = firebase.initializeApp(config);
+    db = firebase.database(app);
+    sessionId = 'session_' + Date.now();
+    startSession(session);
+  } catch(e) {
+    alert('Firebase error: ' + e.message);
+  }
+}
+
+function demoMode() {
+  isDemo = true;
+  sessionId = 'DEMO_' + Math.random().toString(36).substr(2,5).toUpperCase();
+  const session = document.getElementById('session-name-input').value.trim() || 'DEMO';
+  document.getElementById('setup-modal').style.display = 'none';
+  document.getElementById('session-label').textContent = 'SESSION: ' + session;
+  document.getElementById('conn-status').textContent = 'DEMO MODE';
+  document.getElementById('conn-dot').style.background = '#ffaa00';
+  document.getElementById('conn-dot').style.boxShadow = '0 0 6px #ffaa00';
+  addDefaultUnits();
+  renderUnits();
+  draw();
+  log('DEMO MODE — single device only', 'join');
+}
+
+function startSession(name) {
+  document.getElementById('setup-modal').style.display = 'none';
+  document.getElementById('session-label').textContent = 'SESSION: ' + name;
+
+  db.ref(sessionId + '/meta').set({ name, started: Date.now(), active: true });
+
+  db.ref('.info/connected').on('value', snap => {
+    const connected = snap.val();
+    document.getElementById('conn-status').textContent = connected ? 'LIVE' : 'RECONNECTING';
+    document.getElementById('conn-dot').style.background = connected ? 'var(--accent)' : 'var(--danger)';
+  });
+
+  // Listen for unit updates from players
+  db.ref(sessionId + '/units').on('value', snap => {
+    const data = snap.val();
+    if (!data) return;
+    Object.entries(data).forEach(([id, u]) => {
+      if (units[id]) {
+        if (units[id].x !== u.x || units[id].y !== u.y) {
+          log(`${units[id].name} moved`, 'move');
+        }
+        units[id] = { ...units[id], ...u };
+      }
+    });
+    renderUnits();
+    draw();
+  });
+
+  // Listen for connections
+  db.ref(sessionId + '/connections').on('value', snap => {
+    const data = snap.val() || {};
+    Object.keys(units).forEach(id => {
+      units[id].connected = !!data[id];
+    });
+    renderUnits();
+  });
+
+  addDefaultUnits();
+  renderUnits();
+  draw();
+  log('Session started: ' + name, 'join');
+}
+
+// ═══════════════════════════════════════════════
+// UNITS
+// ═══════════════════════════════════════════════
+function addDefaultUnits() {
+  const defaults = [
+    { name: 'Alpha Team',   callsign: 'ALPHA-1',   icon: '🔴', x: 0.2, y: 0.3 },
+    { name: 'Bravo Team',   callsign: 'BRAVO-1',   icon: '🔵', x: 0.4, y: 0.5 },
+    { name: 'Charlie Team', callsign: 'CHARLIE-1', icon: '🟢', x: 0.6, y: 0.3 },
+    { name: 'HQ',           callsign: 'HQ-MAIN',   icon: '🏴', x: 0.5, y: 0.8 },
+  ];
+  defaults.forEach(u => {
+    const id = 'unit_' + Date.now() + '_' + Math.random().toString(36).substr(2,4);
+    units[id] = { ...u, id, connected: false };
+    unitOrder.push(id);
+  });
+  pushUnitsToFirebase();
+}
+
+function addUnit() {
+  const icon = document.getElementById('new-unit-icon').value;
+  const name = document.getElementById('new-unit-name').value.trim();
+  const callsign = document.getElementById('new-unit-callsign').value.trim();
+  if (!name) { alert('Enter a unit name'); return; }
+
+  const id = 'unit_' + Date.now() + '_' + Math.random().toString(36).substr(2,4);
+  units[id] = {
+    id, icon,
+    name: name,
+    callsign: callsign || name.toUpperCase().replace(' ','-'),
+    x: 0.1 + Math.random() * 0.8,
+    y: 0.1 + Math.random() * 0.8,
+    connected: false
+  };
+  unitOrder.push(id);
+  document.getElementById('new-unit-name').value = '';
+  document.getElementById('new-unit-callsign').value = '';
+
+  pushUnitsToFirebase();
+  renderUnits();
+  draw();
+  log('Unit added: ' + name, 'join');
+}
+
+function removeUnit(id) {
+  if (!confirm('Remove unit ' + units[id].name + '?')) return;
+  delete units[id];
+  unitOrder = unitOrder.filter(u => u !== id);
+  if (!isDemo && db) db.ref(sessionId + '/units/' + id).remove();
+  renderUnits();
+  draw();
+}
+
+function pushUnitsToFirebase() {
+  if (isDemo || !db) return;
+  Object.entries(units).forEach(([id, u]) => {
+    db.ref(sessionId + '/units/' + id).set({
+      id: u.id,
+      name: u.name,
+      callsign: u.callsign,
+      icon: u.icon,
+      x: u.x,
+      y: u.y
+    });
+  });
+}
+
+function pushTurnToFirebase() {
+  if (isDemo || !db) return;
+  const activeId = unitOrder[currentTurnIndex] || null;
+  db.ref(sessionId + '/turn').set({ activeUnitId: activeId, index: currentTurnIndex, ts: Date.now() });
+}
+
+// ═══════════════════════════════════════════════
+// TURN CONTROL
+// ═══════════════════════════════════════════════
+function nextTurn() {
+  if (unitOrder.length === 0) return;
+  currentTurnIndex = (currentTurnIndex + 1) % unitOrder.length;
+  updateTurnDisplay();
+  pushTurnToFirebase();
+}
+
+function resetTurns() {
+  currentTurnIndex = 0;
+  updateTurnDisplay();
+  pushTurnToFirebase();
+}
+
+function updateTurnDisplay() {
+  const id = unitOrder[currentTurnIndex];
+  const u = units[id];
+  if (!u) { document.getElementById('turn-display').textContent = '— WAITING —'; return; }
+  document.getElementById('turn-display').textContent = `${u.icon} ${u.callsign}`;
+  log(`Turn: ${u.name} (${u.callsign})`, 'turn');
+  renderUnits();
+  draw();
+}
+
+// ═══════════════════════════════════════════════
+// RENDER UNITS LIST
+// ═══════════════════════════════════════════════
+function renderUnits() {
+  const list = document.getElementById('units-list');
+  list.innerHTML = '';
+  const activeId = unitOrder[currentTurnIndex];
+  unitOrder.forEach((id, i) => {
+    const u = units[id];
+    if (!u) return;
+    const div = document.createElement('div');
+    div.className = 'unit-item' + (id === activeId ? ' active-turn' : '');
+    div.innerHTML = `
+      <div class="unit-icon">${u.icon}</div>
+      <div class="unit-info">
+        <div class="unit-name">${u.name}</div>
+        <div class="unit-callsign">${u.callsign}</div>
+      </div>
+      <div class="unit-online ${u.connected ? 'connected' : ''}" title="${u.connected ? 'Online' : 'Offline'}"></div>
+      <button onclick="removeUnit('${id}')" style="background:none;border:none;color:var(--dim);cursor:pointer;font-size:14px;padding:0 4px" title="Remove">✕</button>
+    `;
+    div.onclick = (e) => {
+      if (e.target.tagName === 'BUTTON') return;
+      currentTurnIndex = i;
+      updateTurnDisplay();
+      pushTurnToFirebase();
+    };
+    list.appendChild(div);
+  });
+}
+
+// ═══════════════════════════════════════════════
+// MAP CANVAS
+// ═══════════════════════════════════════════════
+const canvas = document.getElementById('map-canvas');
+const ctx = canvas.getContext('2d');
+let dragging = null;
+let dragOffX = 0, dragOffY = 0;
+
+function resize() {
+  canvas.width = CANVAS_W();
+  canvas.height = CANVAS_H();
+  draw();
+}
+
+window.addEventListener('resize', resize);
+setTimeout(resize, 100);
+
+function draw() {
+  const W = canvas.width, H = canvas.height;
+  ctx.clearRect(0, 0, W, H);
+
+  // Background terrain (simple procedural map)
+  if (!mapImg) {
+    drawProceduralMap(W, H);
+  } else {
+    ctx.drawImage(mapImg, 0, 0, W, H);
+  }
+
+  // Draw units
+  const activeId = unitOrder[currentTurnIndex];
+  Object.values(units).forEach(u => {
+    const px = u.x * W;
+    const py = u.y * H;
+    const isActive = u.id === activeId;
+
+    // Glow for active unit
+    if (isActive) {
+      ctx.save();
+      ctx.shadowColor = '#39ff6a';
+      ctx.shadowBlur = 20;
+      ctx.beginPath();
+      ctx.arc(px, py, 18, 0, Math.PI * 2);
+      ctx.strokeStyle = '#39ff6a';
+      ctx.lineWidth = 2;
+      ctx.stroke();
+      ctx.restore();
+    }
+
+    // Icon circle bg
+    ctx.beginPath();
+    ctx.arc(px, py, 16, 0, Math.PI * 2);
+    ctx.fillStyle = isActive ? 'rgba(57,255,106,0.15)' : 'rgba(10,15,13,0.7)';
+    ctx.fill();
+    ctx.strokeStyle = isActive ? '#39ff6a' : '#1f3a24';
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+
+    // Unit marker - colored circle with letter
+    const unitColors = ['#ff4444','#4488ff','#44ff88','#ffcc00','#ff88ff','#ff8800','#88ffff','#ffffff'];
+    const colorIndex = Math.abs(u.id.charCodeAt(u.id.length-1)) % unitColors.length;
+    const unitColor = unitColors[colorIndex];
+    ctx.beginPath();
+    ctx.arc(px, py, 12, 0, Math.PI*2);
+    ctx.fillStyle = unitColor;
+    ctx.fill();
+    ctx.font = 'bold 12px Rajdhani, sans-serif';
+    ctx.fillStyle = '#000';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(u.callsign ? u.callsign[0] : '?', px, py);
+
+    // Callsign label
+    ctx.font = '600 10px Rajdhani, sans-serif';
+    ctx.fillStyle = isActive ? '#39ff6a' : '#4a6950';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'top';
+    ctx.fillText(u.callsign, px, py + 19);
+
+    // Online dot
+    if (u.connected) {
+      ctx.beginPath();
+      ctx.arc(px + 14, py - 14, 4, 0, Math.PI * 2);
+      ctx.fillStyle = '#39ff6a';
+      ctx.fill();
+    }
+  });
+}
+
+function drawProceduralMap(W, H) {
+  // Dark tactical map background
+  const grad = ctx.createRadialGradient(W*0.5, H*0.5, 0, W*0.5, H*0.5, W*0.7);
+  grad.addColorStop(0, '#0e1e11');
+  grad.addColorStop(1, '#080e0a');
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, W, H);
+
+  // Terrain patches
+  const terrainColors = ['#0d1f10','#0c1c0f','#0f2212','#0b1a0e'];
+  for (let i = 0; i < 20; i++) {
+    ctx.beginPath();
+    const tx = Math.random()*W, ty = Math.random()*H;
+    ctx.ellipse(tx, ty, 40+Math.random()*120, 30+Math.random()*80, Math.random()*Math.PI, 0, Math.PI*2);
+    ctx.fillStyle = terrainColors[Math.floor(Math.random()*terrainColors.length)];
+    ctx.fill();
+  }
+
+  // Roads/paths
+  ctx.strokeStyle = 'rgba(57,255,106,0.06)';
+  ctx.lineWidth = 2;
+  for (let i = 0; i < 5; i++) {
+    ctx.beginPath();
+    ctx.moveTo(Math.random()*W, Math.random()*H);
+    ctx.bezierCurveTo(Math.random()*W, Math.random()*H, Math.random()*W, Math.random()*H, Math.random()*W, Math.random()*H);
+    ctx.stroke();
+  }
+
+  // Objective markers
+  const objectives = [
+    { label: 'OBJ ALPHA', x: 0.15, y: 0.2 },
+    { label: 'OBJ BRAVO', x: 0.75, y: 0.25 },
+    { label: 'OBJ CHARLIE', x: 0.5, y: 0.65 },
+    { label: 'PHASE LINE 1', x: 0.5, y: 0.4, line: true },
+  ];
+
+  objectives.forEach(o => {
+    const px = o.x * W, py = o.y * H;
+    if (o.line) {
+      ctx.beginPath();
+      ctx.moveTo(0, py); ctx.lineTo(W, py);
+      ctx.strokeStyle = 'rgba(0,229,255,0.15)';
+      ctx.lineWidth = 1;
+      ctx.setLineDash([8, 6]);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.font = '10px Share Tech Mono, monospace';
+      ctx.fillStyle = 'rgba(0,229,255,0.3)';
+      ctx.textAlign = 'center';
+      ctx.fillText(o.label, W*0.5, py - 6);
+    } else {
+      ctx.beginPath();
+      ctx.rect(px - 14, py - 14, 28, 28);
+      ctx.strokeStyle = 'rgba(255,170,0,0.4)';
+      ctx.lineWidth = 1;
+      ctx.stroke();
+      ctx.font = '9px Share Tech Mono, monospace';
+      ctx.fillStyle = 'rgba(255,170,0,0.5)';
+      ctx.textAlign = 'center';
+      ctx.fillText(o.label, px, py + 20);
+      ctx.font = '12px serif';
+      ctx.fillStyle = 'rgba(255,170,0,0.6)';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('★', px, py);
+    }
+  });
+
+  // Compass
+  ctx.save();
+  ctx.translate(W - 36, H - 36);
+  ctx.strokeStyle = 'rgba(57,255,106,0.3)';
+  ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(0,-16); ctx.lineTo(0,16); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(-16,0); ctx.lineTo(16,0); ctx.stroke();
+  ctx.font = 'bold 11px Rajdhani, sans-serif';
+  ctx.fillStyle = 'rgba(57,255,106,0.5)';
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillText('N', 0, -22);
+  ctx.restore();
+}
+
+// Mouse drag for admin (move any unit)
+canvas.addEventListener('mousedown', e => {
+  const rect = canvas.getBoundingClientRect();
+  const mx = e.clientX - rect.left, my = e.clientY - rect.top;
+  const W = canvas.width, H = canvas.height;
+  for (const u of Object.values(units)) {
+    const px = u.x * W, py = u.y * H;
+    if (Math.hypot(mx-px, my-py) < 20) {
+      dragging = u.id;
+      dragOffX = mx - px; dragOffY = my - py;
+      break;
+    }
+  }
+});
+canvas.addEventListener('mousemove', e => {
+  const rect = canvas.getBoundingClientRect();
+  const mx = e.clientX - rect.left, my = e.clientY - rect.top;
+  document.getElementById('coord-display').textContent = `X:${Math.round(mx)} Y:${Math.round(my)}`;
+  if (!dragging) return;
+  const W = canvas.width, H = canvas.height;
+  units[dragging].x = Math.max(0.01, Math.min(0.99, (mx - dragOffX) / W));
+  units[dragging].y = Math.max(0.01, Math.min(0.99, (my - dragOffY) / H));
+  draw();
+});
+canvas.addEventListener('mouseup', () => {
+  if (dragging) {
+    if (!isDemo && db) {
+      db.ref(sessionId + '/units/' + dragging).update({ x: units[dragging].x, y: units[dragging].y });
+    }
+    log('Admin moved ' + units[dragging].name, 'move');
+    dragging = null;
+  }
+});
+
+// Touch support
+canvas.addEventListener('touchstart', e => {
+  e.preventDefault();
+  const touch = e.touches[0];
+  const rect = canvas.getBoundingClientRect();
+  const mx = touch.clientX - rect.left, my = touch.clientY - rect.top;
+  const W = canvas.width, H = canvas.height;
+  for (const u of Object.values(units)) {
+    const px = u.x * W, py = u.y * H;
+    if (Math.hypot(mx-px, my-py) < 24) {
+      dragging = u.id;
+      dragOffX = mx - px; dragOffY = my - py;
+      break;
+    }
+  }
+}, { passive: false });
+canvas.addEventListener('touchmove', e => {
+  e.preventDefault();
+  if (!dragging) return;
+  const touch = e.touches[0];
+  const rect = canvas.getBoundingClientRect();
+  const mx = touch.clientX - rect.left, my = touch.clientY - rect.top;
+  const W = canvas.width, H = canvas.height;
+  units[dragging].x = Math.max(0.01, Math.min(0.99, (mx - dragOffX) / W));
+  units[dragging].y = Math.max(0.01, Math.min(0.99, (my - dragOffY) / H));
+  draw();
+}, { passive: false });
+canvas.addEventListener('touchend', () => {
+  if (dragging) {
+    if (!isDemo && db) {
+      db.ref(sessionId + '/units/' + dragging).update({ x: units[dragging].x, y: units[dragging].y });
+    }
+    dragging = null;
+  }
+});
+
+// ═══════════════════════════════════════════════
+// QR CODE GENERATION
+// ═══════════════════════════════════════════════
+function showQR_OLD_UNUSED() {
+  if (!sessionId) { alert('Start session first'); return; }
+  const grid = document.getElementById('qr-grid');
+  grid.innerHTML = '';
+
+  const baseUrl = window.location.origin + window.location.pathname.replace('index.html','') + 'player.html';
+
+  unitOrder.forEach(id => {
+    const u = units[id];
+    if (!u) return;
+    const playerUrl = `${baseUrl}?session=${encodeURIComponent(sessionId)}&unit=${encodeURIComponent(id)}`;
+
+    const card = document.createElement('div');
+    card.className = 'qr-unit-card';
+    card.innerHTML = `
+      <h4>${u.icon} ${u.name}<br><small style="color:var(--dim)">${u.callsign}</small></h4>
+      <div class="qr-code" id="qr-${id}"></div>
+      <div class="qr-url">${playerUrl.substr(0,60)}…</div>
+    `;
+    grid.appendChild(card);
+
+    setTimeout(() => {
+      try {
+        new QRCode(document.getElementById('qr-' + id), {
+          text: playerUrl,
+          width: 100, height: 100,
+          colorDark: '#39ff6a',
+          colorLight: '#0a0f0d',
+        });
+      } catch(e) {}
+    }, 50);
+  });
+
+  document.getElementById('qr-modal').classList.add('open');
+}
+
+
+function showQR() {
+  if (!sessionId) { alert('Start session first'); return; }
+  const grid = document.getElementById('qr-grid');
+  grid.innerHTML = '';
+  const baseUrl = window.location.origin + window.location.pathname.replace('index.html','') + 'player.html';
+  unitOrder.forEach(id => {
+    const u = units[id];
+    if (!u) return;
+    const playerUrl = baseUrl + '?session=' + encodeURIComponent(sessionId) + '&unit=' + encodeURIComponent(id);
+    const qrApiUrl = 'https://api.qrserver.com/v1/create-qr-code/?size=160x160&data=' + encodeURIComponent(playerUrl) + '&format=png';
+    const card = document.createElement('div');
+    card.className = 'qr-unit-card';
+    card.innerHTML = '<h4>' + u.icon + ' ' + u.name + '<br><small style="color:var(--dim)">' + u.callsign + '</small></h4>' +
+      '<div style="display:flex;justify-content:center;margin-bottom:8px"><img src="' + qrApiUrl + '" width="160" height="160" style="border:2px solid #1f3a24;background:#fff" alt="QR"/></div>' +
+      '<div class="qr-url">' + playerUrl.substr(0,50) + '...</div>';
+    grid.appendChild(card);
+  });
+  document.getElementById('qr-modal').classList.add('open');
+}
+
+function closeQR() {
+  document.getElementById('qr-modal').classList.remove('open');
+}
+
+// ═══════════════════════════════════════════════
+// LOG
+// ═══════════════════════════════════════════════
+function log(msg, type='') {
+  const log = document.getElementById('event-log');
+  const now = new Date();
+  const ts = now.getHours().toString().padStart(2,'0') + ':' + now.getMinutes().toString().padStart(2,'0') + ':' + now.getSeconds().toString().padStart(2,'0');
+  const div = document.createElement('div');
+  div.className = 'log-entry ' + type;
+  div.innerHTML = `<span class="ts">[${ts}]</span> <span class="msg">${msg}</span>`;
+  log.prepend(div);
+}
+</script>
+</body>
+</html>
