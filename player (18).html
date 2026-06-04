@@ -1,0 +1,513 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no"/>
+  <title>TACMAP</title>
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Rajdhani:wght@400;600;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --accent: #39ff6a;
+      --accent-rgb: 57,255,106;
+      --bg: #0a0f0d;
+      --surface: #111a14;
+      --border: #1f3a24;
+      --dim: #4a6950;
+      --text: #c8e6c9;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; user-select: none; }
+    html, body { height: 100%; overflow: hidden; background: var(--bg); color: var(--text); font-family: 'Rajdhani', sans-serif; display: flex; flex-direction: column; transition: background 0.3s; }
+
+    header { background: var(--surface); border-bottom: 1px solid var(--border); padding: 8px 12px; display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+    .logo { font-family: 'Share Tech Mono', monospace; font-size: 13px; color: var(--accent); letter-spacing: 3px; text-shadow: 0 0 8px var(--accent); }
+    .unit-badge { background: rgba(var(--accent-rgb),0.1); border: 1px solid var(--border); padding: 3px 8px; font-size: 13px; font-weight: 700; border-radius: 2px; }
+    .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--dim); margin-left: auto; }
+    .dot.live { background: var(--accent); box-shadow: 0 0 8px var(--accent); animation: pulse 2s infinite; }
+    @keyframes pulse { 0%,100%{opacity:1}50%{opacity:0.4} }
+
+    /* Theme colours */
+    .theme-bar { background: var(--surface); border-bottom: 1px solid var(--border); padding: 5px 12px; display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+    .theme-bar span { font-size: 10px; color: var(--dim); letter-spacing: 1px; text-transform: uppercase; font-family: 'Share Tech Mono', monospace; }
+    .theme-btn { width: 22px; height: 22px; border-radius: 50%; border: 2px solid transparent; cursor: pointer; touch-action: manipulation; }
+    .theme-btn.active { border-color: #fff; box-shadow: 0 0 6px rgba(255,255,255,0.5); }
+    .quit-btn { margin-left: auto; background: transparent; border: 1px solid #ff4444; color: #ff4444; padding: 3px 10px; font-family: 'Rajdhani', sans-serif; font-size: 12px; font-weight: 700; letter-spacing: 1px; cursor: pointer; touch-action: manipulation; }
+    .quit-btn:active { background: #ff4444; color: #fff; }
+
+    #turn-banner { padding: 8px; text-align: center; font-size: 13px; font-weight: 700; letter-spacing: 1px; background: var(--surface); border-bottom: 1px solid var(--border); color: var(--dim); flex-shrink: 0; }
+    #turn-banner.your-turn { background: rgba(var(--accent-rgb),0.15); border-bottom-color: var(--accent); color: var(--accent); animation: glow-banner 1.5s infinite; }
+    @keyframes glow-banner { 0%,100%{box-shadow:inset 0 0 10px rgba(var(--accent-rgb),0.1)}50%{box-shadow:inset 0 0 25px rgba(var(--accent-rgb),0.3)} }
+
+    #map-wrap { flex: 1; position: relative; overflow: hidden; background: #1a1a1a; touch-action: none; }
+    #map-inner { position: absolute; top: 0; left: 0; transform-origin: 0 0; }
+    #map-img { display: block; }
+
+    .unit-marker { position: absolute; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: 700; color: #000; transform: translate(-50%,-50%); pointer-events: none; transition: box-shadow 0.2s; }
+    .unit-label-txt { position: absolute; top: 100%; left: 50%; transform: translateX(-50%); white-space: nowrap; font-family: 'Share Tech Mono', monospace; text-shadow: 0 0 4px #000, 0 0 4px #000, 0 0 4px #000; color: #fff; margin-top: 3px; }
+
+    #my-unit { position: absolute; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: 700; color: #000; transform: translate(-50%,-50%); z-index: 10; cursor: pointer; transition: box-shadow 0.2s; }
+    .you-label { position: absolute; bottom: 110%; left: 50%; transform: translateX(-50%); white-space: nowrap; font-family: 'Share Tech Mono', monospace; letter-spacing: 1px; text-shadow: 0 0 4px #000; color: var(--accent); }
+    .cs-label { position: absolute; top: 110%; left: 50%; transform: translateX(-50%); white-space: nowrap; font-family: 'Share Tech Mono', monospace; text-shadow: 0 0 4px #000; color: var(--accent); }
+
+    #zoom-btns { position: absolute; right: 10px; bottom: 10px; display: flex; flex-direction: column; gap: 6px; z-index: 20; }
+    .zoom-btn { width: 38px; height: 38px; background: rgba(0,0,0,0.7); border: 1px solid var(--border); color: var(--accent); font-size: 20px; display: flex; align-items: center; justify-content: center; cursor: pointer; border-radius: 4px; touch-action: manipulation; font-family: 'Share Tech Mono', monospace; }
+    .zoom-btn:active { background: rgba(var(--accent-rgb),0.2); }
+
+    #tap-hint { position: absolute; top: 8px; left: 50%; transform: translateX(-50%); background: rgba(0,0,0,0.8); border: 1px solid var(--border); padding: 5px 12px; font-size: 11px; color: var(--dim); font-family: 'Share Tech Mono', monospace; white-space: nowrap; z-index: 20; pointer-events: none; border-radius: 2px; }
+    #tap-hint.active { border-color: var(--accent); color: var(--accent); }
+
+    #confirm-btn { display: none; width: 100%; padding: 14px; background: var(--accent); color: #000; border: none; font-size: 17px; font-weight: 700; font-family: 'Rajdhani', sans-serif; letter-spacing: 2px; cursor: pointer; flex-shrink: 0; touch-action: manipulation; }
+
+    /* Chat */
+    #chat-wrap { background: var(--surface); border-top: 1px solid var(--border); flex-shrink: 0; max-height: 180px; display: flex; flex-direction: column; }
+    #chat-msgs { flex: 1; overflow-y: auto; padding: 6px 10px; font-size: 12px; min-height: 60px; max-height: 110px; }
+    .chat-msg { margin-bottom: 4px; line-height: 1.4; }
+    .chat-msg .sender { font-family: 'Share Tech Mono', monospace; font-size: 10px; color: var(--accent); }
+    .chat-msg .sender.host { color: #ffaa00; }
+    .chat-msg .body { color: var(--text); }
+    .chat-msg .ts { font-size: 9px; color: var(--dim); margin-left: 4px; }
+    #chat-input-row { display: flex; border-top: 1px solid var(--border); flex-shrink: 0; }
+    #chat-input { flex: 1; background: transparent; border: none; color: var(--text); padding: 8px 10px; font-family: 'Rajdhani', sans-serif; font-size: 14px; outline: none; }
+    #chat-send { background: var(--accent); border: none; color: #000; padding: 8px 14px; font-weight: 700; font-family: 'Rajdhani', sans-serif; font-size: 13px; cursor: pointer; touch-action: manipulation; flex-shrink: 0; }
+
+    /* Quit confirm */
+    #quit-modal { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.85); z-index: 1000; align-items: center; justify-content: center; }
+    #quit-modal.open { display: flex; }
+    .quit-box { background: var(--surface); border: 1px solid #ff4444; padding: 24px; text-align: center; width: 280px; }
+    .quit-box h3 { color: #ff4444; font-size: 18px; margin-bottom: 8px; letter-spacing: 2px; }
+    .quit-box p { color: var(--dim); font-size: 13px; margin-bottom: 16px; }
+    .quit-btns { display: flex; gap: 10px; }
+    .quit-btns button { flex: 1; padding: 10px; font-family: 'Rajdhani', sans-serif; font-size: 15px; font-weight: 700; cursor: pointer; border: none; touch-action: manipulation; }
+    .quit-yes { background: #ff4444; color: #fff; }
+    .quit-no { background: var(--border); color: var(--text); }
+
+    #loading { position: fixed; inset: 0; background: var(--bg); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 16px; z-index: 999; }
+    .spinner { width: 40px; height: 40px; border: 2px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: spin 1s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    #loading p { font-family: 'Share Tech Mono', monospace; font-size: 13px; color: var(--dim); }
+    #error-screen { position: fixed; inset: 0; background: var(--bg); display: none; flex-direction: column; align-items: center; justify-content: center; gap: 12px; padding: 24px; text-align: center; z-index: 999; }
+    #error-screen h2 { color: #ff4444; font-size: 20px; }
+    #error-screen p { color: var(--dim); font-size: 13px; line-height: 1.6; }
+  </style>
+</head>
+<body>
+<div id="loading"><div class="spinner"></div><p>CONNECTING TO TACMAP…</p></div>
+<div id="error-screen"><h2>⚠ ERROR</h2><p id="error-msg">Could not connect.</p></div>
+
+<header>
+  <div class="logo">⬡ TACMAP</div>
+  <div class="unit-badge" id="unit-badge">—</div>
+  <div class="dot" id="conn-dot"></div>
+</header>
+
+<div class="theme-bar">
+  <span>THEME</span>
+  <div class="theme-btn active" style="background:#39ff6a" onclick="setTheme('green')" title="Green"></div>
+  <div class="theme-btn" style="background:#ff4444" onclick="setTheme('red')" title="Red"></div>
+  <div class="theme-btn" style="background:#4488ff" onclick="setTheme('blue')" title="Blue"></div>
+  <div class="theme-btn" style="background:#ffcc00" onclick="setTheme('yellow')" title="Yellow"></div>
+  <span style="margin-left:6px">ICON</span>
+  <input type="range" id="icon-size-slider" min="10" max="80" value="44" step="2"
+    style="width:60px;accent-color:var(--accent);cursor:pointer"
+    oninput="iconBase=parseInt(this.value);localStorage.setItem('tacmap_icon_size',iconBase);renderAllUnits()"/>
+  <button class="quit-btn" onclick="document.getElementById('quit-modal').classList.add('open')">✕ QUIT</button>
+</div>
+
+<div id="turn-banner">WAITING FOR TURN…</div>
+
+<div id="map-wrap">
+  <div id="map-inner">
+    <img id="map-img" src="https://24level42.github.io/DTTX/map.png" alt="map" onload="onMapLoad()"/>
+    <div id="other-units"></div>
+    <div id="my-unit">
+      <span class="you-label" id="you-lbl">▲ YOU</span>
+      <span id="my-letter">?</span>
+      <span class="cs-label" id="my-cs">—</span>
+    </div>
+  </div>
+  <div id="zoom-btns">
+    <div class="zoom-btn" ontouchstart="e=>{e.preventDefault();zoomIn()}" onclick="zoomIn()">+</div>
+    <div class="zoom-btn" ontouchstart="e=>{e.preventDefault();zoomOut()}" onclick="zoomOut()">−</div>
+    <div class="zoom-btn" ontouchstart="e=>{e.preventDefault();zoomReset()}" onclick="zoomReset()" style="font-size:11px;letter-spacing:0">FIT</div>
+  </div>
+  <div id="tap-hint">DRAG TO PAN • TAP TO MOVE (YOUR TURN)</div>
+</div>
+
+<button id="confirm-btn" onclick="confirmMove()">✓ CONFIRM MOVE</button>
+
+<div id="chat-wrap">
+  <div id="chat-msgs"></div>
+  <div id="chat-input-row">
+    <input id="chat-input" placeholder="Type message…" maxlength="120" onkeydown="if(event.key==='Enter')sendChat()"/>
+    <button id="chat-send" onclick="sendChat()">SEND</button>
+  </div>
+</div>
+
+<!-- Quit Modal -->
+<div id="quit-modal">
+  <div class="quit-box">
+    <h3>QUIT DTTX?</h3>
+    <p>You will be disconnected from the exercise.</p>
+    <div class="quit-btns">
+      <button class="quit-yes" onclick="quitApp()">QUIT</button>
+      <button class="quit-no" onclick="document.getElementById('quit-modal').classList.remove('open')">CANCEL</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const params = new URLSearchParams(window.location.search);
+const sessionId = params.get('session');
+const myUnitId = params.get('unit');
+if (!sessionId || !myUnitId) showError('Invalid QR code.');
+
+const firebaseConfig = {
+  apiKey: "AIzaSyAbKI8JQ4VoZ6pr7UrSl_ovk10f0dx1AsU",
+  authDomain: "dttx-98e49.firebaseapp.com",
+  databaseURL: "https://dttx-98e49-default-rtdb.asia-southeast1.firebasedatabase.app",
+  projectId: "dttx-98e49",
+  storageBucket: "dttx-98e49.firebasestorage.app",
+  messagingSenderId: "42966455501",
+  appId: "1:42966455501:web:857c386cbbad3269e34584"
+};
+
+let db, allUnits = {}, myUnit = null, currentTurnUnitId = null, isMyTurn = false;
+let pendingX = null, pendingY = null, hasPendingMove = false;
+let iconBase = 44; // base icon size, user adjustable
+const unitColors = ['#ff4444','#4488ff','#44ff88','#ffcc00','#ff88ff','#ff8800','#88ffff','#cccccc'];
+function getColor(id) { return unitColors[Math.abs((id||'').charCodeAt((id||'').length-1)||0) % unitColors.length]; }
+
+// ═══ THEME ═══
+const themes = {
+  green:  { accent: '#39ff6a', rgb: '57,255,106' },
+  red:    { accent: '#ff4444', rgb: '255,68,68' },
+  blue:   { accent: '#4488ff', rgb: '68,136,255' },
+  yellow: { accent: '#ffcc00', rgb: '255,204,0' }
+};
+function setTheme(name) {
+  const t = themes[name] || themes.green;
+  document.documentElement.style.setProperty('--accent', t.accent);
+  document.documentElement.style.setProperty('--accent-rgb', t.rgb);
+  document.querySelectorAll('.theme-btn').forEach(b => b.classList.remove('active'));
+  event.target.classList.add('active');
+  localStorage.setItem('tacmap_theme', name);
+  renderAllUnits();
+}
+// Restore saved theme and icon size
+const savedTheme = localStorage.getItem('tacmap_theme');
+if (savedTheme) setTheme(savedTheme);
+const savedIconSize = localStorage.getItem('tacmap_icon_size');
+if (savedIconSize) {
+  iconBase = parseInt(savedIconSize);
+  const slider = document.getElementById('icon-size-slider');
+  if (slider) slider.value = iconBase;
+}
+
+// ═══ QUIT ═══
+function quitApp() {
+  if (db) db.ref(sessionId + '/connections/' + myUnitId).remove();
+  document.body.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100vh;background:#0a0f0d;font-family:Share Tech Mono,monospace;color:#ff4444;font-size:16px;letter-spacing:2px">DISCONNECTED FROM DTTX</div>';
+}
+
+// ═══ ZOOM & PAN ═══
+const mapWrap = document.getElementById('map-wrap');
+const mapInner = document.getElementById('map-inner');
+const mapImg = document.getElementById('map-img');
+let scale = 1, panX = 0, panY = 0;
+let lastPinchDist = 0, isPinching = false, isPanning = false;
+let panStartX = 0, panStartY = 0, panStartPX = 0, panStartPY = 0;
+let touchMoved = false, touchStartX = 0, touchStartY = 0;
+const TAP_THRESHOLD = 8;
+
+function onMapLoad() {
+  mapInner.style.width = mapImg.naturalWidth + 'px';
+  mapInner.style.height = mapImg.naturalHeight + 'px';
+  mapImg.style.width = mapImg.naturalWidth + 'px';
+  mapImg.style.height = mapImg.naturalHeight + 'px';
+  zoomReset();
+}
+
+function applyTransform() {
+  mapInner.style.transform = `translate(${panX}px,${panY}px) scale(${scale})`;
+}
+
+function clampPan() {
+  const wW = mapWrap.clientWidth, wH = mapWrap.clientHeight;
+  const iW = mapInner.offsetWidth * scale, iH = mapInner.offsetHeight * scale;
+  if (iW <= wW) { panX = (wW - iW) / 2; }
+  else { panX = Math.min(0, Math.max(panX, wW - iW)); }
+  if (iH <= wH) { panY = (wH - iH) / 2; }
+  else { panY = Math.min(0, Math.max(panY, wH - iH)); }
+}
+
+function zoomAt(newScale, cx, cy) {
+  const ratio = newScale / scale;
+  panX = cx - ratio * (cx - panX);
+  panY = cy - ratio * (cy - panY);
+  scale = Math.max(0.3, Math.min(8, newScale));
+  clampPan(); applyTransform(); renderAllUnits();
+}
+
+function zoomIn() { zoomAt(scale * 1.4, mapWrap.clientWidth/2, mapWrap.clientHeight/2); }
+function zoomOut() { zoomAt(scale / 1.4, mapWrap.clientWidth/2, mapWrap.clientHeight/2); }
+function zoomReset() {
+  const wW = mapWrap.clientWidth, wH = mapWrap.clientHeight;
+  const iW = mapInner.offsetWidth, iH = mapInner.offsetHeight;
+  if (!iW || !iH) return;
+  scale = Math.min(wW / iW, wH / iH);
+  panX = (wW - iW * scale) / 2;
+  panY = (wH - iH * scale) / 2;
+  applyTransform(); renderAllUnits();
+}
+
+function screenToMap(cx, cy) {
+  const rect = mapWrap.getBoundingClientRect();
+  const lx = (cx - rect.left - panX) / scale;
+  const ly = (cy - rect.top - panY) / scale;
+  const W = mapInner.offsetWidth, H = mapInner.offsetHeight;
+  return { x: Math.max(0.01, Math.min(0.99, lx/W)), y: Math.max(0.01, Math.min(0.99, ly/H)) };
+}
+
+mapWrap.addEventListener('touchstart', e => {
+  if (e.target.closest('#zoom-btns')) return;
+  touchMoved = false;
+  if (e.touches.length === 2) {
+    isPinching = true; isPanning = false;
+    lastPinchDist = Math.hypot(e.touches[0].clientX-e.touches[1].clientX, e.touches[0].clientY-e.touches[1].clientY);
+  } else {
+    isPanning = true;
+    touchStartX = e.touches[0].clientX; touchStartY = e.touches[0].clientY;
+    panStartX = e.touches[0].clientX; panStartY = e.touches[0].clientY;
+    panStartPX = panX; panStartPY = panY;
+  }
+}, { passive: true });
+
+mapWrap.addEventListener('touchmove', e => {
+  if (e.target.closest('#zoom-btns')) return;
+  e.preventDefault();
+  const dx = e.touches[0] ? Math.abs(e.touches[0].clientX - touchStartX) : 0;
+  const dy = e.touches[0] ? Math.abs(e.touches[0].clientY - touchStartY) : 0;
+  if (dx > TAP_THRESHOLD || dy > TAP_THRESHOLD) touchMoved = true;
+  if (e.touches.length === 2 && isPinching) {
+    const dist = Math.hypot(e.touches[0].clientX-e.touches[1].clientX, e.touches[0].clientY-e.touches[1].clientY);
+    const cx = (e.touches[0].clientX+e.touches[1].clientX)/2 - mapWrap.getBoundingClientRect().left;
+    const cy = (e.touches[0].clientY+e.touches[1].clientY)/2 - mapWrap.getBoundingClientRect().top;
+    zoomAt(scale * dist / lastPinchDist, cx, cy);
+    lastPinchDist = dist;
+  } else if (e.touches.length === 1 && touchMoved) {
+    panX = panStartPX + (e.touches[0].clientX - panStartX);
+    panY = panStartPY + (e.touches[0].clientY - panStartY);
+    clampPan(); applyTransform();
+  }
+}, { passive: false });
+
+mapWrap.addEventListener('touchend', e => {
+  if (e.target.closest('#zoom-btns')) return;
+  isPinching = false;
+  if (!touchMoved && isMyTurn && e.changedTouches.length === 1) {
+    const t = e.changedTouches[0];
+    const pos = screenToMap(t.clientX, t.clientY);
+    setPendingMove(pos.x, pos.y);
+  }
+}, { passive: true });
+
+mapWrap.addEventListener('mousedown', e => {
+  if (e.target.closest('#zoom-btns')) return;
+  isPanning = true; touchMoved = false;
+  touchStartX = e.clientX; touchStartY = e.clientY;
+  panStartX = e.clientX; panStartY = e.clientY; panStartPX = panX; panStartPY = panY;
+});
+mapWrap.addEventListener('mousemove', e => {
+  if (!isPanning || e.buttons !== 1) return;
+  if (Math.abs(e.clientX-touchStartX)>TAP_THRESHOLD || Math.abs(e.clientY-touchStartY)>TAP_THRESHOLD) touchMoved = true;
+  panX = panStartPX + (e.clientX - panStartX); panY = panStartPY + (e.clientY - panStartY);
+  clampPan(); applyTransform();
+});
+mapWrap.addEventListener('mouseup', e => {
+  if (!touchMoved && isMyTurn) { const pos = screenToMap(e.clientX, e.clientY); setPendingMove(pos.x, pos.y); }
+  isPanning = false;
+});
+mapWrap.addEventListener('wheel', e => {
+  e.preventDefault();
+  const rect = mapWrap.getBoundingClientRect();
+  zoomAt(scale * (e.deltaY > 0 ? 0.85 : 1.15), e.clientX-rect.left, e.clientY-rect.top);
+}, { passive: false });
+
+// ═══ FIREBASE ═══
+function showError(msg) {
+  document.getElementById('loading').style.display = 'none';
+  document.getElementById('error-screen').style.display = 'flex';
+  document.getElementById('error-msg').textContent = msg;
+}
+
+function init() {
+  try {
+    const app = firebase.initializeApp(firebaseConfig, 'player_' + Date.now());
+    db = firebase.database(app);
+  } catch(e) { showError('Firebase error: ' + e.message); return; }
+
+  db.ref('.info/connected').on('value', snap => {
+    const ok = snap.val();
+    document.getElementById('conn-dot').className = 'dot' + (ok ? ' live' : '');
+    if (ok) {
+      db.ref(sessionId + '/connections/' + myUnitId).set(true);
+      db.ref(sessionId + '/connections/' + myUnitId).onDisconnect().remove();
+    }
+  });
+
+  db.ref(sessionId + '/units').on('value', snap => {
+    const data = snap.val();
+    if (!data) { showError('Session not found.'); return; }
+    allUnits = data;
+    myUnit = data[myUnitId];
+    if (!myUnit) { showError('Unit not found.'); return; }
+    document.getElementById('loading').style.display = 'none';
+    updateMyInfo();
+    renderAllUnits();
+  });
+
+  db.ref(sessionId + '/turn').on('value', snap => {
+    const turn = snap.val();
+    if (!turn) return;
+    currentTurnUnitId = turn.activeUnitId;
+    isMyTurn = currentTurnUnitId === myUnitId;
+    updateTurnBanner();
+    renderAllUnits();
+  });
+
+  // Chat listener
+  db.ref(sessionId + '/chat').limitToLast(50).on('child_added', snap => {
+    const msg = snap.val();
+    if (msg) appendChat(msg);
+  });
+}
+
+function updateMyInfo() {
+  if (!myUnit) return;
+  document.getElementById('unit-badge').textContent = myUnit.name || '—';
+  document.getElementById('my-letter').textContent = (myUnit.callsign||'?')[0];
+  document.getElementById('my-cs').textContent = myUnit.callsign || '';
+  document.getElementById('my-unit').style.background = getColor(myUnitId);
+}
+
+// ═══ UNITS RENDER ═══
+function renderAllUnits() {
+  const W = mapInner.offsetWidth, H = mapInner.offsetHeight;
+  if (!W || !H) return;
+  // iconBase is user-set size, divide by scale so icon shrinks when zoomed out
+  const sz = Math.max(8, Math.round(iconBase / scale));
+  const fz = Math.max(6, Math.round((iconBase * 0.32) / scale));
+  const lf = Math.max(5, Math.round((iconBase * 0.23) / scale));
+  const bw = Math.max(1, Math.round(2 / scale));
+  const glowSize = Math.max(4, Math.round(iconBase * 0.36 / scale));
+
+  // My unit
+  if (myUnit) {
+    const x = hasPendingMove ? pendingX : myUnit.x;
+    const y = hasPendingMove ? pendingY : myUnit.y;
+    const el = document.getElementById('my-unit');
+    const mySz = Math.max(10, Math.round((iconBase + 10) / scale));
+    const myFz = Math.max(7, Math.round((iconBase * 0.36) / scale));
+    const myLf = Math.max(5, Math.round((iconBase * 0.23) / scale));
+    const accent = getComputedStyle(document.documentElement).getPropertyValue('--accent').trim();
+    el.style.left = (x * W) + 'px';
+    el.style.top = (y * H) + 'px';
+    el.style.width = mySz + 'px';
+    el.style.height = mySz + 'px';
+    el.style.fontSize = myFz + 'px';
+    el.style.background = getColor(myUnitId);
+    el.style.boxShadow = `0 0 ${glowSize}px ${accent}, 0 0 ${glowSize*2}px ${accent}55`;
+    el.style.border = `${bw+1}px solid ${accent}`;
+    document.getElementById('you-lbl').style.fontSize = myLf + 'px';
+    document.getElementById('my-cs').style.fontSize = myLf + 'px';
+  }
+
+  // Other units
+  const container = document.getElementById('other-units');
+  container.innerHTML = '';
+  Object.entries(allUnits).forEach(([key, u]) => {
+    if (!u) return;
+    const uid = u.id || key;
+    if (uid === myUnitId) return;
+    const isActive = uid === currentTurnUnitId;
+    const color = getColor(uid);
+    const div = document.createElement('div');
+    div.className = 'unit-marker';
+    const glow = isActive ? `0 0 ${glowSize}px #ffaa00, 0 0 ${glowSize*2}px #ffaa0055` : `0 0 ${Math.round(8/scale)}px ${color}88`;
+    div.style.cssText = `left:${u.x*W}px;top:${u.y*H}px;width:${sz}px;height:${sz}px;font-size:${fz}px;background:${color};border:${bw}px solid ${isActive?'#ffaa00':color+'aa'};box-shadow:${glow};opacity:${isActive?1:0.85};`;
+    div.innerHTML = `<span style="font-weight:700;color:#000;line-height:1">${(u.callsign||'?')[0]}</span><div class="unit-label-txt" style="font-size:${lf}px">${u.callsign||''}</div>`;
+    container.appendChild(div);
+  });
+}
+
+function setPendingMove(x, y) {
+  pendingX = x; pendingY = y; hasPendingMove = true;
+  document.getElementById('confirm-btn').style.display = 'block';
+  document.getElementById('tap-hint').textContent = 'TAP CONFIRM TO SEND MOVE';
+  document.getElementById('tap-hint').className = 'active';
+  renderAllUnits();
+}
+
+function updateTurnBanner() {
+  const banner = document.getElementById('turn-banner');
+  const cu = allUnits[currentTurnUnitId];
+  if (isMyTurn) {
+    banner.className = 'your-turn';
+    banner.textContent = '▶ YOUR TURN — TAP MAP TO PLACE';
+    document.getElementById('tap-hint').className = 'active';
+    document.getElementById('tap-hint').textContent = 'TAP TO MOVE • DRAG TO PAN';
+  } else {
+    banner.className = '';
+    banner.textContent = `WAITING — ${cu ? cu.callsign : '—'} IS MOVING`;
+    document.getElementById('tap-hint').className = '';
+    document.getElementById('tap-hint').textContent = 'DRAG TO PAN • PINCH TO ZOOM';
+    hasPendingMove = false;
+    document.getElementById('confirm-btn').style.display = 'none';
+    renderAllUnits();
+  }
+}
+
+function confirmMove() {
+  if (!hasPendingMove || !db) return;
+  db.ref(sessionId + '/units/' + myUnitId).update({ x: pendingX, y: pendingY });
+  if (allUnits[myUnitId]) { allUnits[myUnitId].x = pendingX; allUnits[myUnitId].y = pendingY; }
+  hasPendingMove = false;
+  document.getElementById('confirm-btn').style.display = 'none';
+  document.getElementById('turn-banner').className = '';
+  document.getElementById('turn-banner').textContent = '✓ MOVE SENT — WAITING FOR NEXT TURN';
+  document.getElementById('tap-hint').textContent = 'DRAG TO PAN • PINCH TO ZOOM';
+  document.getElementById('tap-hint').className = '';
+  renderAllUnits();
+}
+
+// ═══ CHAT ═══
+function sendChat() {
+  const input = document.getElementById('chat-input');
+  const text = input.value.trim();
+  if (!text || !db || !myUnit) return;
+  db.ref(sessionId + '/chat').push({
+    sender: myUnit.callsign || myUnit.name,
+    isHost: false,
+    text,
+    ts: Date.now()
+  });
+  input.value = '';
+}
+
+function appendChat(msg) {
+  const msgs = document.getElementById('chat-msgs');
+  const div = document.createElement('div');
+  div.className = 'chat-msg';
+  const t = new Date(msg.ts);
+  const ts = t.getHours().toString().padStart(2,'0') + ':' + t.getMinutes().toString().padStart(2,'0');
+  div.innerHTML = `<span class="sender${msg.isHost?' host':''}">${msg.sender}</span> <span class="body">${msg.text}</span><span class="ts">${ts}</span>`;
+  msgs.appendChild(div);
+  msgs.scrollTop = msgs.scrollHeight;
+}
+
+window.addEventListener('resize', () => { zoomReset(); });
+if (sessionId && myUnitId) init();
+</script>
+</body>
+</html>
